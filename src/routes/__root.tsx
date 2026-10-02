@@ -116,7 +116,7 @@ import { FloatingContact } from "../components/common/FloatingContact";
 import { GreenNextChatbot } from "../components/chatbot/GreenNextChatbot";
 import { useRouterState } from "@tanstack/react-router";
 import { trackEvent } from "../lib/analytics";
-import { trackPageView } from "../lib/analytics";
+import { trackPageView, initSessionIntelligence, trackTrafficAttribution } from "../lib/analytics";
 import { usePageBehaviorTracking } from "../hooks/usePageBehaviorTracking";
 
 function RootComponent() {
@@ -125,6 +125,8 @@ function RootComponent() {
   const pathname = routerState.location.pathname;
 
   useEffect(() => {
+    initSessionIntelligence();
+    trackTrafficAttribution();
     trackPageView(pathname);
     trackEvent({
       tab: "Navigation",

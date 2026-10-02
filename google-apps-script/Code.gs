@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ============================================================================
  * GreenNext Digital Infrastructure - Backend & Analytics Integration
  * ============================================================================
@@ -19,7 +19,7 @@
 var RAW_DATA_SPREADSHEET_ID = "1X4gGWCFfs48gcTcapB1LNb-5ieThCPNO35uXGRJNdoY";
 var ANALYTICS_SPREADSHEET_ID = "1OTeDPp9JP36ztYa3ZNcE6Ev221wQIQ9Bi094zoxcF18";
 
-// ─── 1. HTTP GET & POST ENDPOINTS ──────────────────────────────────────────
+// â”€â”€â”€ 1. HTTP GET & POST ENDPOINTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Health check & diagnostic status endpoint.
@@ -53,7 +53,7 @@ function doPost(e) {
     var rawSs = SpreadsheetApp.openById(RAW_DATA_SPREADSHEET_ID);
     var timestamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HH:mm:ss");
 
-    // ── Unified Lead Submission ──
+    // â”€â”€ Unified Lead Submission â”€â”€
     // Lead payloads intentionally do not need a sheet name; they are routed by formType.
     if (payload.formType === "lead_inquiry") {
       return processLeadSubmission(payload, rawSs, timestamp);
@@ -63,7 +63,7 @@ function doPost(e) {
       return jsonResponse(false, "Missing sheet parameter.");
     }
 
-    // ── Form Submission: Quick Inquiry ──
+    // â”€â”€ Form Submission: Quick Inquiry â”€â”€
     if (targetSheet === "Quick_Inquiries" || payload.formType === "quick_inquiry") {
       var qSheet = getOrCreateSheet(rawSs, "Quick_Inquiries", [
         "Timestamp", "Event", "Name", "Email", "Phone", "Interest", "Message", "Page", "Session ID"
@@ -98,7 +98,7 @@ function doPost(e) {
       return jsonResponse(true, "Quick inquiry recorded successfully.");
     }
 
-    // ── Form Submission: Long-Form Technical Inquiry ──
+    // â”€â”€ Form Submission: Long-Form Technical Inquiry â”€â”€
     if (targetSheet === "Contact_Submissions" || payload.formType === "long_form_inquiry") {
       var cSubSheet = getOrCreateSheet(rawSs, "Contact_Submissions", [
         "Timestamp", "Event", "Name", "Email", "Phone", "Organization", "Category", "Region", "Message", "Page", "Session ID"
@@ -135,7 +135,16 @@ function doPost(e) {
       return jsonResponse(true, "Technical inquiry recorded successfully.");
     }
 
-    // ── Behavioral Telemetry: 10 Fixed Tabs ──
+    // â”€â”€ Session Intelligence â”€â”€
+    // Accept both "Session Intelligence" (current) and "Session_Intelligence" (legacy) tab names.
+    if (targetSheet === "Session Intelligence" || targetSheet === "Session_Intelligence") {
+      var sSheet = getOrCreateSheet(rawSs, "Session Intelligence", SESSION_INTELLIGENCE_HEADERS);
+      ensureSessionIntelligenceHeaders(sSheet);
+      upsertSessionIntelligence(sSheet, payload, timestamp);
+      return jsonResponse(true, "Session Intelligence recorded successfully.");
+    }
+
+    // â”€â”€ Behavioral Telemetry: 10 Fixed Tabs â”€â”€
     var sheet = rawSs.getSheetByName(targetSheet);
     if (!sheet) {
       // Create if missing with correct schema
@@ -151,6 +160,111 @@ function doPost(e) {
     return jsonResponse(true, "Event recorded.");
   } catch (err) {
     return jsonResponse(false, "Error: " + err.toString());
+  }
+}
+
+/**
+ * The 13 required columns for the "Session Intelligence" tab (anonymous, no PII).
+ * Column order must match upsertSessionIntelligence below exactly.
+ */
+var SESSION_INTELLIGENCE_HEADERS = [
+  "Timestamp",           // col 1  â€“ IST server write time
+  "Session ID",          // col 2  â€“ anonymous session token
+  "Session Kind",        // col 3  â€“ new_session | returning_session
+  "Session Start",       // col 4  â€“ ISO startedAt
+  "Session End",         // col 5  â€“ ISO endedAt (blank on first write)
+  "Last Activity",       // col 6  â€“ ISO lastActivityAt
+  "Entry Page",          // col 7  â€“ first page visited in session
+  "Exit Page",           // col 8  â€“ last known page
+  "Navigation Path",     // col 9  â€“ ordered path e.g. / -> /infrastructure
+  "Page Count",          // col 10 â€“ distinct meaningful pages visited
+  "Active Duration (ms)", // col 11 â€“ visible-tab active milliseconds only
+  "Bounce Status",       // col 12 â€“ Yes | No
+  "Session End Reason"   // col 13 â€“ page_exit | visibility_hidden | etc.
+];
+
+/**
+ * Ensures the "Session Intelligence" header row exists with the correct column names.
+ * Safe to call on every write â€“ only adds columns when they are missing.
+ */
+function ensureSessionIntelligenceHeaders(sheet) {
+  if (sheet.getLastRow() === 0) {
+    // Brand-new sheet: write full header row with dark styling.
+    sheet.getRange(1, 1, 1, SESSION_INTELLIGENCE_HEADERS.length)
+      .setValues([SESSION_INTELLIGENCE_HEADERS]);
+    sheet.getRange(1, 1, 1, SESSION_INTELLIGENCE_HEADERS.length)
+      .setFontWeight("bold")
+      .setBackground("#1E293B")
+      .setFontColor("#F8FAFC");
+    sheet.setFrozenRows(1);
+    return;
+  }
+  // Sheet already has data: only extend headers if columns are missing.
+  var numCols = Math.max(sheet.getLastColumn(), 1);
+  var existing = sheet.getRange(1, 1, 1, numCols).getDisplayValues()[0];
+  if (existing.length < SESSION_INTELLIGENCE_HEADERS.length) {
+    var missing = SESSION_INTELLIGENCE_HEADERS.slice(existing.length);
+    sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+    sheet.getRange(1, 1, 1, SESSION_INTELLIGENCE_HEADERS.length)
+      .setFontWeight("bold")
+      .setBackground("#1E293B")
+      .setFontColor("#F8FAFC");
+  }
+}
+
+/**
+ * Upserts a session record: one row per anonymous session ID.
+ *
+ * â€¢ If no row exists for the session ID, a new row is appended.
+ * â€¢ If a row already exists it is updated in-place with the latest values.
+ *   The original server Timestamp is preserved so the row does not drift.
+ *
+ * This prevents duplicate rows from:
+ *   â€“ React Strict Mode double-mounting
+ *   â€“ Multiple beforeunload / pagehide / visibilitychange events
+ *   â€“ Network retries
+ */
+function upsertSessionIntelligence(sheet, payload, timestamp) {
+  var sessionId = String(payload.sessionId || "");
+  if (!sessionId || sessionId === "session_fallback" || sessionId === "server") return;
+
+  var lastRow = sheet.getLastRow();
+  var matchingRow = 0;
+
+  if (lastRow > 1) {
+    var ids = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === sessionId) {
+        matchingRow = i + 2;
+        break;
+      }
+    }
+  }
+
+  // Build the 13-column data row (must match SESSION_INTELLIGENCE_HEADERS order).
+  var row = [
+    timestamp,                                          // col 1  Timestamp
+    sessionId,                                          // col 2  Session ID
+    payload.sessionKind || "",                          // col 3  Session Kind
+    payload.startedAt || "",                            // col 4  Session Start
+    payload.endedAt || "",                              // col 5  Session End
+    payload.lastActivityAt || "",                       // col 6  Last Activity
+    payload.entryPage || "",                            // col 7  Entry Page
+    payload.exitPage || payload.entryPage || "",        // col 8  Exit Page
+    payload.navigationPath || payload.entryPage || "", // col 9  Navigation Path
+    payload.pageCount || 1,                             // col 10 Page Count
+    payload.activeDurationMs || 0,                      // col 11 Active Duration (ms)
+    payload.bounce || "",                               // col 12 Bounce Status
+    payload.sessionEndReason || ""                      // col 13 Session End Reason
+  ];
+
+  if (matchingRow) {
+    // Preserve the original server Timestamp to keep the chronological sort order.
+    var originalTimestamp = sheet.getRange(matchingRow, 1).getValue();
+    if (originalTimestamp) row[0] = originalTimestamp;
+    sheet.getRange(matchingRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
   }
 }
 
@@ -412,7 +526,7 @@ function tryUpdateAnalytics() {
   }
 }
 
-// ─── 2. ANALYTICS SPREADSHEET DERIVATION & AGGREGATION ─────────────────────
+// â”€â”€â”€ 2. ANALYTICS SPREADSHEET DERIVATION & AGGREGATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Reads collected raw data from Spreadsheet 1 and aggregates derived intelligence
@@ -434,6 +548,7 @@ function updateAnalyticsSpreadsheet() {
   var locData = getSheetRows(rawSs, "Locations");
   var aiData = getSheetRows(rawSs, "AI Assistant");
   var ctaData = getSheetRows(rawSs, "CTA Interactions");
+  var trafficData = getSheetRows(rawSs, "Session Intelligence");
   var quickLeads = getSheetRows(rawSs, "Quick_Inquiries");
   var longLeads = getSheetRows(rawSs, "Contact_Submissions");
   var dedicatedLeads = getSheetRows(rawSs, "Lead_Submissions");
@@ -505,7 +620,8 @@ function updateAnalyticsSpreadsheet() {
     totalEvents: totalEvents,
     recentQuick: quickLeads.slice(-5).reverse(),
     recentLong: longLeads.slice(-5).reverse(),
-    advanced: advancedModel.summary
+    advanced: advancedModel.summary,
+    traffic: buildTrafficAnalytics(trafficData)
   });
 
   // 2. Regional Analytics Sheet
@@ -563,14 +679,14 @@ function renderExecutiveSummary(anaSs, stats) {
 
   var rows = [];
   stats.recentQuick.forEach(function(r) {
-    rows.push([r[0], "Quick Inquiry", r[2], r[3], r[4], r[5], "—", r[7]]);
+    rows.push([r[0], "Quick Inquiry", r[2], r[3], r[4], r[5], "â€”", r[7]]);
   });
   stats.recentLong.forEach(function(r) {
     rows.push([r[0], "Technical Inquiry", r[2], r[3], r[4], r[6], (r[7] || "") + " (" + (r[5] || "") + ")", r[9]]);
   });
 
   if (rows.length === 0) {
-    rows.push(["—", "No inquiries recorded yet", "—", "—", "—", "—", "—", "—"]);
+    rows.push(["â€”", "No inquiries recorded yet", "â€”", "â€”", "â€”", "â€”", "â€”", "â€”"]);
   }
 
   if (stats.advanced) {
@@ -590,6 +706,37 @@ function renderExecutiveSummary(anaSs, stats) {
     rows.push(["Leads With Documents", stats.advanced.leadsWithDocuments, "Lead_Submissions document metadata"]);
   }
 
+  if (stats.traffic) {
+    var traffic = stats.traffic;
+    rows.push([""]);
+    rows.push(["TRAFFIC INTELLIGENCE", "VALUE", "OBSERVED BASIS"]);
+    rows.push(["Total Traffic Sessions", traffic.totalSessions, "Distinct anonymous session IDs with traffic attribution"]);
+    rows.push(["Organic Search Sessions", traffic.organicSessions, "Traffic channel: Organic Search"]);
+    rows.push(["Paid Sessions", traffic.paidSessions, "Paid campaign indicators"]);
+    rows.push(["Social Sessions", traffic.socialSessions, "Traffic channel: Social"]);
+    rows.push(["Referral Sessions", traffic.referralSessions, "Traffic channel: Referral"]);
+    rows.push(["Direct Sessions", traffic.directSessions, "Traffic channel: Direct"]);
+    rows.push(["Campaign Sessions", traffic.campaignSessions, "Sessions with a UTM campaign value"]);
+    rows.push([""]);
+    rows.push(["TRAFFIC SOURCES", "SESSIONS", ""]);
+    traffic.topSources.forEach(function(item) { rows.push([item[0], item[1], "Source"]); });
+    rows.push([""]);
+    rows.push(["TRAFFIC MEDIUMS", "SESSIONS", ""]);
+    traffic.topMediums.forEach(function(item) { rows.push([item[0], item[1], "Medium"]); });
+    rows.push([""]);
+    rows.push(["TRAFFIC CHANNELS", "SESSIONS", ""]);
+    traffic.topChannels.forEach(function(item) { rows.push([item[0], item[1], "Classified channel"]); });
+    rows.push([""]);
+    rows.push(["TOP REFERRER DOMAINS", "SESSIONS", ""]);
+    traffic.topReferrers.forEach(function(item) { rows.push([item[0], item[1], "External referrer domain"]); });
+    rows.push([""]);
+    rows.push(["TOP LANDING PAGES", "SESSIONS", ""]);
+    traffic.topLandingPages.forEach(function(item) { rows.push([item[0], item[1], "First page in session"]); });
+    rows.push([""]);
+    rows.push(["UTM CAMPAIGNS", "SESSIONS", "SOURCE / MEDIUM"]);
+    traffic.topCampaigns.forEach(function(item) { rows.push([item[0], item[1], item[2] + " / " + item[3]]); });
+  }
+
   var fullData = headers.concat(rows);
   writeRows(sheet, fullData, 8);
 
@@ -607,6 +754,63 @@ function renderExecutiveSummary(anaSs, stats) {
     insertChartSafely(sheet, Charts.ChartType.COLUMN, [sheet.getRange("A4:B12")], 1, 10,
       "GreenNext KPI Overview", "bottom");
   }
+}
+
+/** Aggregates the existing Session_Intelligence rows; no second traffic store is created. */
+function buildTrafficAnalytics(rows) {
+  var sessions = {};
+  var sources = {}, mediums = {}, channels = {}, referrers = {}, landingPages = {}, campaigns = {};
+  (rows || []).forEach(function(row) {
+    var id = String(row[1] || "");
+    if (!id || id === "session_fallback" || id === "Session ID") return;
+    // Historical session rows predate traffic fields; do not fabricate Direct attribution for them.
+    if (!row[13] && !row[14] && !row[15] && !row[16]) return;
+    // Existing rows are one-per-session; retain the first attribution if duplicates exist.
+    if (sessions[id]) return;
+    var channel = String(row[16] || "Direct");
+    var record = {
+      channel: channel,
+      organic: channel === "Organic Search" || row[24] === true || String(row[24]).toUpperCase() === "TRUE",
+      paid: channel === "Paid" || row[25] === true || String(row[25]).toUpperCase() === "TRUE"
+    };
+    sessions[id] = record;
+    incrementTrafficCount(sources, row[14] || "Direct");
+    incrementTrafficCount(mediums, row[15] || "direct");
+    incrementTrafficCount(channels, channel);
+    if (row[18]) incrementTrafficCount(referrers, row[18]);
+    incrementTrafficCount(landingPages, row[13] || row[6] || "(unknown)");
+    if (row[21]) {
+      var campaignKey = String(row[21]);
+      if (!campaigns[campaignKey]) campaigns[campaignKey] = { sessions: 0, source: String(row[19] || row[14] || ""), medium: String(row[20] || row[15] || "") };
+      campaigns[campaignKey].sessions++;
+    }
+  });
+  var values = Object.keys(sessions).map(function(id) { return sessions[id]; });
+  var campaignRows = Object.keys(campaigns).map(function(name) { return [name, campaigns[name].sessions, campaigns[name].source, campaigns[name].medium]; });
+  campaignRows.sort(function(a, b) { return b[1] - a[1]; });
+  return {
+    totalSessions: values.length,
+    organicSessions: values.filter(function(v) { return v.organic; }).length,
+    paidSessions: values.filter(function(v) { return v.paid; }).length,
+    socialSessions: values.filter(function(v) { return v.channel === "Social"; }).length,
+    referralSessions: values.filter(function(v) { return v.channel === "Referral"; }).length,
+    directSessions: values.filter(function(v) { return v.channel === "Direct"; }).length,
+    campaignSessions: campaignRows.reduce(function(total, item) { return total + item[1]; }, 0),
+    topSources: topTrafficCounts(sources, 10), topMediums: topTrafficCounts(mediums, 10),
+    topChannels: topTrafficCounts(channels, 10),
+    topReferrers: topTrafficCounts(referrers, 10), topLandingPages: topTrafficCounts(landingPages, 10),
+    topCampaigns: campaignRows.slice(0, 10)
+  };
+}
+
+function incrementTrafficCount(counts, value) {
+  var key = String(value || "Unspecified");
+  counts[key] = (counts[key] || 0) + 1;
+}
+
+function topTrafficCounts(counts, limit) {
+  return Object.keys(counts).map(function(key) { return [key, counts[key]]; })
+    .sort(function(a, b) { return b[1] - a[1]; }).slice(0, limit);
 }
 
 /**
@@ -852,7 +1056,7 @@ function renderAiAssistantAnalytics(anaSs, aiData) {
   }
 }
 
-// ─── 3. UTILITIES & INITIALIZERS ───────────────────────────────────────────
+// â”€â”€â”€ 3. UTILITIES & INITIALIZERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Ensures a renderer has the Spreadsheet instance for the requested document.
@@ -1005,9 +1209,9 @@ function setupBehavioralSheetIfMissing(rawSs, targetSheet) {
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("GreenNext")
-    .addItem("🔄 Update Analytics & Reports", "updateAnalyticsSpreadsheet")
-    .addItem("📊 Refresh Analytics Now", "updateAnalyticsSpreadsheet")
-    .addItem("⚙️ Setup Analytics Sheets Structure", "setupAnalyticsSpreadsheet")
+    .addItem("ðŸ”„ Update Analytics & Reports", "updateAnalyticsSpreadsheet")
+    .addItem("ðŸ“Š Refresh Analytics Now", "updateAnalyticsSpreadsheet")
+    .addItem("âš™ï¸ Setup Analytics Sheets Structure", "setupAnalyticsSpreadsheet")
     .addToUi();
 }
 
@@ -1016,10 +1220,10 @@ function setupAnalyticsSpreadsheet() {
   SpreadsheetApp.getUi().alert("GreenNext Analytics Derived Sheets initialized successfully.");
 }
 
-// ─── 4. DAILY / WEEKLY / MONTHLY REPORTING LAYER ──────────────────────────
+// â”€â”€â”€ 4. DAILY / WEEKLY / MONTHLY REPORTING LAYER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 var REPORT_TIMEZONE_FALLBACK = "Asia/Kolkata";
-var ANALYTICS_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1OTeDPp9JP36ztYa3ZNcE6Ev221wQIQ9Bi094zoxcF18/edit";
+var ANALYTICS_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1AYA5NsOTwSG7hC_5M9pxAeZCTpbZZ_-y7Pil5TDYt0o/edit";
 var REPORT_LEAD_TYPES = [
   "Technical Consultation / Session Booking",
   "Partner / Collaboration Inquiry",
@@ -1315,18 +1519,18 @@ function buildAdvancedJourneyMetrics(sessions) {
     var labels = events.map(advancedRecordLabel).filter(Boolean);
     if (labels.length) advancedIncrement(first, labels[0]);
     for (var i = 0; i < labels.length - 1; i++) {
-      advancedIncrement(next, labels[i] + " → " + labels[i + 1]);
+      advancedIncrement(next, labels[i] + " â†’ " + labels[i + 1]);
     }
-    if (labels.length) advancedIncrement(paths, labels.slice(0, 5).join(" → "));
+    if (labels.length) advancedIncrement(paths, labels.slice(0, 5).join(" â†’ "));
 
     var ctaIndex = events.findIndex(function(record) { return record.source === "CTA Interactions"; });
-    if (ctaIndex > 0) advancedIncrement(beforeCta, events.slice(Math.max(0, ctaIndex - 4), ctaIndex).map(advancedRecordLabel).join(" → ") + " → CTA Interaction");
+    if (ctaIndex > 0) advancedIncrement(beforeCta, events.slice(Math.max(0, ctaIndex - 4), ctaIndex).map(advancedRecordLabel).join(" â†’ ") + " â†’ CTA Interaction");
     var lead = sessions[sessionId].leads[0];
     if (lead && lead.timestamp) {
       var leadIndex = events.filter(function(record) { return record.timestamp && record.timestamp <= lead.timestamp; }).length;
-      if (leadIndex > 0) advancedIncrement(beforeLead, events.slice(Math.max(0, leadIndex - 4), leadIndex).map(advancedRecordLabel).join(" → ") + " → Lead");
+      if (leadIndex > 0) advancedIncrement(beforeLead, events.slice(Math.max(0, leadIndex - 4), leadIndex).map(advancedRecordLabel).join(" â†’ ") + " â†’ Lead");
       var after = events.slice(leadIndex, leadIndex + 4).map(advancedRecordLabel).filter(Boolean);
-      if (after.length) advancedIncrement(afterLead, "Lead → " + after.join(" → "));
+      if (after.length) advancedIncrement(afterLead, "Lead â†’ " + after.join(" â†’ "));
     }
   });
   return {
@@ -1473,7 +1677,7 @@ function buildAdvancedAssociations(eventRecords) {
     var sessions = Object.keys(bySession).filter(function(id) {
       return Object.keys(bySession[id][pair[0]]).length && Object.keys(bySession[id][pair[1]]).length;
     });
-    return [pair[0] + " ↔ " + pair[1], sessions.length, "Observed session overlap; no causation implied"];
+    return [pair[0] + " â†” " + pair[1], sessions.length, "Observed session overlap; no causation implied"];
   });
   return { pairs: pairs, rows: [["Category", "Interest", "Interactions"]].concat(advancedInterestAssociationRows(eventRecords)) };
 }
@@ -1624,9 +1828,9 @@ function renderAdvancedAiAnalysis(anaSs, model) {
     ["Unique Sessions", ai.sessions, "Usable Session ID values"],
     ["New Session Users", ai.newSessions, "Session Kind where available"],
     ["Returning Session Users", ai.returningSessions, "Session Kind where available"],
-    ["Assistant → CTA Sessions", ai.ctaSessions, "Observed session overlap"],
-    ["Assistant → Form Start Sessions", ai.formStartSessions, "Observed session overlap"],
-    ["Assistant → Lead Sessions", ai.leadSessions, "Observed session overlap with actual leads"],
+    ["Assistant â†’ CTA Sessions", ai.ctaSessions, "Observed session overlap"],
+    ["Assistant â†’ Form Start Sessions", ai.formStartSessions, "Observed session overlap"],
+    ["Assistant â†’ Lead Sessions", ai.leadSessions, "Observed session overlap with actual leads"],
     ["Assistant-Associated Conversion Rate", ai.conversionRate, "Lead sessions / assistant sessions"],
     [""],
     ["TOP AI ASSISTANT INTERESTS", "INTERACTIONS"],
@@ -1635,9 +1839,9 @@ function renderAdvancedAiAnalysis(anaSs, model) {
   rows = rows.concat(ai.trend);
   rows.push([""]); rows.push(["ASSISTANT-TO-LEAD FUNNEL", "SESSIONS"]);
   rows.push(["Assistant Sessions", ai.sessions]);
-  rows.push(["Assistant → CTA", ai.ctaSessions]);
-  rows.push(["Assistant → Form Start", ai.formStartSessions]);
-  rows.push(["Assistant → Lead", ai.leadSessions]);
+  rows.push(["Assistant â†’ CTA", ai.ctaSessions]);
+  rows.push(["Assistant â†’ Form Start", ai.formStartSessions]);
+  rows.push(["Assistant â†’ Lead", ai.leadSessions]);
   writeRows(sheet, rows, 3);
   styleAdvancedSheet(sheet, 3, [4, 14, 15 + ai.topics.length, 16 + ai.topics.length + ai.trend.length]);
   if (ai.topics.length) {
@@ -2103,7 +2307,7 @@ function buildDailyReport(source, timezone, period) {
   clearCharts(sheet);
 
   var rows = [
-    ["GREENNEXT — DAILY REPORT"],
+    ["GREENNEXT â€” DAILY REPORT"],
     ["Report Date:", period.start],
     ["Last Refreshed:", reportRefreshTimestamp(timezone)],
     [""],
@@ -2162,7 +2366,7 @@ function buildWeeklyReport(source, timezone, period) {
   clearCharts(sheet);
 
   var rows = [
-    ["GREENNEXT — WEEKLY REPORT"],
+    ["GREENNEXT â€” WEEKLY REPORT"],
     ["Report Week:", period.start + " to " + addReportDays(period.start, 6)],
     ["Week Start:", period.start],
     ["Week End:", addReportDays(period.start, 6)],
@@ -2220,7 +2424,7 @@ function buildMonthlyReport(source, timezone, period) {
   clearCharts(sheet);
 
   var rows = [
-    ["GREENNEXT — MONTHLY REPORT"],
+    ["GREENNEXT â€” MONTHLY REPORT"],
     ["Report Month:", period.start.substring(0, 7)],
     ["Month Start:", period.start],
     ["Month End:", addReportDays(period.end, -1)],

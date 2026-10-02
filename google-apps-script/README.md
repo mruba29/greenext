@@ -15,16 +15,17 @@ Google Apps Script Web App Endpoint (`doPost`)
       │
       ├── Writes raw events & inquiries
       ▼
-Spreadsheet 1: GreenNext Raw Data (`1X4gGWCFfs48gcTcapB1LNb-5ieThCPNO35uXGRJNdoY`)
+Spreadsheet 1: GreenNext Raw Data (`14ciH1aNzWIJHJkQ5rYCdrEhci3KYMjrTSeY3QMaerVI`)
   ├── 10 Behavioral Tabs (Navigation, Regions, Infrastructure, Energy, Automation,
   │                       Solutions, Industries, Locations, AI Assistant, CTA Interactions)
   ├── `Quick_Inquiries` (Dedicated quick-lead submissions)
-  └── `Contact_Submissions` (Dedicated consultative long-form inquiries)
+  ├── `Contact_Submissions` (Dedicated consultative long-form inquiries)
+  └── `Session_Intelligence` (One anonymous row per session, including traffic attribution)
       │
       ├── Derived Aggregation & Funnel Computation (`updateAnalyticsSpreadsheet`)
       ▼
-Spreadsheet 2: GreenNext Analytics (`1OTeDPp9JP36ztYa3ZNcE6Ev221wQIQ9Bi094zoxcF18`)
-  ├── `Executive_Summary` (Core KPIs, Sessions, Inquiries, Recent Lead Log)
+Spreadsheet 2: GreenNext Analytics (`1AYA5NsOTwSG7hC_5M9pxAeZCTpbZZ_-y7Pil5TDYt0o`)
+  ├── `Executive_Summary` (Core KPIs, Traffic Intelligence, Sessions, Inquiries, Recent Lead Log)
   ├── `Regional_Analytics` (Madurai, Coimbatore, Trichy, Mangalore Breakdown)
   ├── `CTA_and_Funnel` (Conversion Funnel & CTA Click Distribution)
   ├── `Infrastructure_and_Energy` (Stack layers, Energy flow, and Automation nodes)
@@ -46,13 +47,17 @@ Spreadsheet 2: GreenNext Analytics (`1OTeDPp9JP36ztYa3ZNcE6Ev221wQIQ9Bi094zoxcF1
 4. **Resilient Backward & Forward Compatibility**:
    - Supports existing 5-column behavioral tabs without disrupting historical data.
    - Website includes automatic fallback handling so inquiries succeed even if the deployed Apps Script version has not yet been refreshed.
+5. **Traffic Intelligence**:
+   - Reuses the existing anonymous session ID and `Session_Intelligence` sheet; it does not add another endpoint or raw-data sheet.
+   - Stores the original landing page, sanitized referrer origin/domain, classified source/medium/channel, UTM values, and organic/paid flags alongside Session Intelligence.
+   - Adds deduplicated source, medium, channel, referral, landing-page, and campaign summaries to the existing `Executive_Summary` tab. Historical sessions without attribution are left unclassified.
 
 ---
 
 ## 3. How to Deploy the Apps Script
 
 1. Open **Spreadsheet 1 (Raw Data)** in Google Sheets:
-   - URL: `https://docs.google.com/spreadsheets/d/1X4gGWCFfs48gcTcapB1LNb-5ieThCPNO35uXGRJNdoY/edit`
+   - URL: `https://docs.google.com/spreadsheets/d/14ciH1aNzWIJHJkQ5rYCdrEhci3KYMjrTSeY3QMaerVI/edit`
 2. Navigate to **Extensions > Apps Script** in the top menu.
 3. Replace the existing code in the editor with the complete contents of `google-apps-script/Code.gs`.
 4. Click **Save** (💾 icon).
