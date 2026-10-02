@@ -114,6 +114,7 @@ import { SiteHeader } from "../components/layout/SiteHeader";
 import { SiteFooter } from "../components/layout/SiteFooter";
 import { FloatingContact } from "../components/common/FloatingContact";
 import { GreenNextChatbot } from "../components/chatbot/GreenNextChatbot";
+import { GreetingPopups } from "../components/common/GreetingPopups";
 import { useRouterState } from "@tanstack/react-router";
 import { trackEvent } from "../lib/analytics";
 import { trackPageView, initSessionIntelligence, trackTrafficAttribution } from "../lib/analytics";
@@ -149,6 +150,8 @@ function RootComponent() {
         <SiteFooter />
         <FloatingContact />
         <GreenNextChatbot />
+        {/* Entry greeting + exit intent — mounted once at root, once per session */}
+        <GreetingPopups />
       </div>
     </QueryClientProvider>
   );
